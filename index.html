@@ -89,6 +89,10 @@ input[type="text"]{
         Refresh
     </button>
 
+    <button style="background:#6c757d;color:white" onclick="manageToken()">
+        Token
+    </button>
+
     <div class="progress" id="progress"></div>
 </div>
 
@@ -134,6 +138,11 @@ const getHeaders = () => ({
 
 async function uploadFiles(){
 
+    if (!token) {
+        alert("Please enter a GitHub token first");
+        return;
+    }
+
     const files = document.getElementById("files").files;
 
     if(files.length === 0){
@@ -156,17 +165,22 @@ async function uploadFiles(){
             branch:branch
         };
 
-        const response = await fetch(url,{
-            method:"PUT",
-            headers:getHeaders(),
-            body:JSON.stringify(body)
-        });
+        try {
+            const response = await fetch(url,{
+                method:"PUT",
+                headers:getHeaders(),
+                body:JSON.stringify(body)
+            });
 
-        if(response.ok){
-            uploaded++;
-        }
-        else{
-            console.error(await response.text());
+            if(response.ok){
+                uploaded++;
+            }
+            else{
+                const error = await response.json();
+                console.error(`Upload failed for ${file.name}:`, error);
+            }
+        } catch (err) {
+            console.error(`Upload error for ${file.name}:`, err);
         }
 
         document.getElementById("progress").innerHTML =
@@ -196,52 +210,80 @@ function toBase64(file){
 
 async function loadFiles(){
 
+    if (!token) {
+        alert("Please enter a GitHub token first");
+        return;
+    }
+
     const url =
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}`;
 
-    const response = await fetch(url,{
-        headers:getHeaders()
-    });
+    try {
+        const response = await fetch(url,{
+            headers:getHeaders()
+        });
 
-    const files = await response.json();
+        if (!response.ok) {
+            const error = await response.json();
+            console.error("GitHub API Error:", error);
+            alert(`Error: ${error.message}`);
+            return;
+        }
 
-    const table = document.getElementById("fileTable");
+        const files = await response.json();
 
-    table.innerHTML = "";
+        if (!Array.isArray(files)) {
+            console.error("Unexpected response:", files);
+            alert("Error: Invalid response from GitHub");
+            return;
+        }
 
-    files.forEach(file=>{
+        const table = document.getElementById("fileTable");
 
-        const row = document.createElement("tr");
+        table.innerHTML = "";
 
-        row.innerHTML = `
-            <td>${file.name}</td>
+        files.forEach(file=>{
 
-            <td>
-                <a href="${file.download_url}" target="_blank">
-                    Download
-                </a>
-            </td>
+            const row = document.createElement("tr");
 
-            <td>
-                <button class="rename-btn"
-                        onclick="renameFile('${file.name}')">
-                        Rename
-                </button>
-            </td>
+            row.innerHTML = `
+                <td>${file.name}</td>
 
-            <td>
-                <button class="delete-btn"
-                        onclick="deleteFile('${file.name}')">
-                        Delete
-                </button>
-            </td>
-        `;
+                <td>
+                    <a href="${file.download_url}" target="_blank">
+                        Download
+                    </a>
+                </td>
 
-        table.appendChild(row);
-    });
+                <td>
+                    <button class="rename-btn"
+                            onclick="renameFile('${file.name}')">
+                            Rename
+                    </button>
+                </td>
+
+                <td>
+                    <button class="delete-btn"
+                            onclick="deleteFile('${file.name}')">
+                            Delete
+                    </button>
+                </td>
+            `;
+
+            table.appendChild(row);
+        });
+    } catch (err) {
+        console.error("Error loading files:", err);
+        alert("Error loading files: " + err.message);
+    }
 }
 
 async function deleteFile(fileName){
+
+    if (!token) {
+        alert("Please enter a GitHub token first");
+        return;
+    }
 
     if(!confirm(`Delete ${fileName}?`))
         return;
@@ -249,29 +291,48 @@ async function deleteFile(fileName){
     const url =
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${fileName}`;
 
-    const fileResp = await fetch(url,{
-        headers:getHeaders()
-    });
+    try {
+        const fileResp = await fetch(url,{
+            headers:getHeaders()
+        });
 
-    const fileData = await fileResp.json();
+        if (!fileResp.ok) {
+            const error = await fileResp.json();
+            alert(`Error: ${error.message}`);
+            return;
+        }
 
-    const deleteResp = await fetch(url,{
-        method:"DELETE",
-        headers:getHeaders(),
-        body:JSON.stringify({
-            message:`Delete ${fileName}`,
-            sha:fileData.sha,
-            branch:branch
-        })
-    });
+        const fileData = await fileResp.json();
 
-    if(deleteResp.ok){
-        alert("Deleted");
-        loadFiles();
+        const deleteResp = await fetch(url,{
+            method:"DELETE",
+            headers:getHeaders(),
+            body:JSON.stringify({
+                message:`Delete ${fileName}`,
+                sha:fileData.sha,
+                branch:branch
+            })
+        });
+
+        if(deleteResp.ok){
+            alert("Deleted");
+            loadFiles();
+        } else {
+            const error = await deleteResp.json();
+            alert(`Delete failed: ${error.message}`);
+        }
+    } catch (err) {
+        console.error("Delete error:", err);
+        alert("Error deleting file: " + err.message);
     }
 }
 
 async function renameFile(oldName){
+
+    if (!token) {
+        alert("Please enter a GitHub token first");
+        return;
+    }
 
     const newName =
     prompt("Enter new file name:",oldName);
@@ -282,47 +343,58 @@ async function renameFile(oldName){
     const oldUrl =
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${oldName}`;
 
-    const oldResp =
-    await fetch(oldUrl,{headers:getHeaders()});
+    try {
+        const oldResp =
+        await fetch(oldUrl,{headers:getHeaders()});
 
-    const oldData =
-    await oldResp.json();
+        if (!oldResp.ok) {
+            const error = await oldResp.json();
+            alert(`Error: ${error.message}`);
+            return;
+        }
 
-    const rawContent =
-    await fetch(oldData.download_url);
+        const oldData =
+        await oldResp.json();
 
-    const blob =
-    await rawContent.blob();
+        const rawContent =
+        await fetch(oldData.download_url);
 
-    const base64 =
-    await toBase64(blob);
+        const blob =
+        await rawContent.blob();
 
-    const newUrl =
-    `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${newName}`;
+        const base64 =
+        await toBase64(blob);
 
-    await fetch(newUrl,{
-        method:"PUT",
-        headers:getHeaders(),
-        body:JSON.stringify({
-            message:`Rename ${oldName} -> ${newName}`,
-            content:base64,
-            branch:branch
-        })
-    });
+        const newUrl =
+        `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${newName}`;
 
-    await fetch(oldUrl,{
-        method:"DELETE",
-        headers:getHeaders(),
-        body:JSON.stringify({
-            message:`Delete ${oldName}`,
-            sha:oldData.sha,
-            branch:branch
-        })
-    });
+        await fetch(newUrl,{
+            method:"PUT",
+            headers:getHeaders(),
+            body:JSON.stringify({
+                message:`Rename ${oldName} -> ${newName}`,
+                content:base64,
+                branch:branch
+            })
+        });
 
-    alert("Renamed");
+        await fetch(oldUrl,{
+            method:"DELETE",
+            headers:getHeaders(),
+            body:JSON.stringify({
+                message:`Delete ${oldName}`,
+                sha:oldData.sha,
+                branch:branch
+            })
+        });
 
-    loadFiles();
+        alert("Renamed");
+
+        loadFiles();
+    } catch (err) {
+        console.error("Rename error:", err);
+        alert("Error renaming file: " + err.message);
+    }
 }
 
 function filterFiles(){
@@ -343,7 +415,28 @@ function filterFiles(){
     });
 }
 
-loadFiles();
+function manageToken(){
+    const choice = prompt("Enter 'set' to set a new token, or 'clear' to remove the current token:");
+    
+    if (choice === "set") {
+        const newToken = prompt("Enter your GitHub Personal Access Token:");
+        if (newToken) {
+            token = newToken;
+            sessionStorage.setItem("githubToken", token);
+            alert("Token saved");
+            loadFiles();
+        }
+    } else if (choice === "clear") {
+        token = null;
+        sessionStorage.removeItem("githubToken");
+        document.getElementById("fileTable").innerHTML = "";
+        alert("Token cleared");
+    }
+}
+
+if (token) {
+    loadFiles();
+}
 
 </script>
 
