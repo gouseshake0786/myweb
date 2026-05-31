@@ -118,12 +118,19 @@ const repo = "myweb";
 const branch = "main";
 const uploadFolder = "uploads";
 
-const token = "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";
+let token = sessionStorage.getItem("githubToken");
 
-const headers = {
+if (!token) {
+    token = prompt("Enter your GitHub Personal Access Token:");
+    if (token) {
+        sessionStorage.setItem("githubToken", token);
+    }
+}
+
+const getHeaders = () => ({
     "Authorization": `token ${token}`,
     "Accept": "application/vnd.github+json"
-};
+});
 
 async function uploadFiles(){
 
@@ -151,7 +158,7 @@ async function uploadFiles(){
 
         const response = await fetch(url,{
             method:"PUT",
-            headers:headers,
+            headers:getHeaders(),
             body:JSON.stringify(body)
         });
 
@@ -193,7 +200,7 @@ async function loadFiles(){
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}`;
 
     const response = await fetch(url,{
-        headers:headers
+        headers:getHeaders()
     });
 
     const files = await response.json();
@@ -243,14 +250,14 @@ async function deleteFile(fileName){
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${fileName}`;
 
     const fileResp = await fetch(url,{
-        headers:headers
+        headers:getHeaders()
     });
 
     const fileData = await fileResp.json();
 
     const deleteResp = await fetch(url,{
         method:"DELETE",
-        headers:headers,
+        headers:getHeaders(),
         body:JSON.stringify({
             message:`Delete ${fileName}`,
             sha:fileData.sha,
@@ -276,7 +283,7 @@ async function renameFile(oldName){
     `https://api.github.com/repos/${owner}/${repo}/contents/${uploadFolder}/${oldName}`;
 
     const oldResp =
-    await fetch(oldUrl,{headers:headers});
+    await fetch(oldUrl,{headers:getHeaders()});
 
     const oldData =
     await oldResp.json();
@@ -295,7 +302,7 @@ async function renameFile(oldName){
 
     await fetch(newUrl,{
         method:"PUT",
-        headers:headers,
+        headers:getHeaders(),
         body:JSON.stringify({
             message:`Rename ${oldName} -> ${newName}`,
             content:base64,
@@ -305,7 +312,7 @@ async function renameFile(oldName){
 
     await fetch(oldUrl,{
         method:"DELETE",
-        headers:headers,
+        headers:getHeaders(),
         body:JSON.stringify({
             message:`Delete ${oldName}`,
             sha:oldData.sha,
@@ -343,4 +350,3 @@ loadFiles();
 </body>
 </html>
 ```
-
