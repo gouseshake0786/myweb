@@ -707,13 +707,8 @@
         for (const file of selectedFiles) {
           setProgress(file.name, 8, "Reading file");
           const content = await readFileAsBase64(file);
-          setProgress(file.name, 35, "Creating blob");
-          const blob = await createBlob(content);
-          setProgress(file.name, 65, "Committing upload");
-          await commitTreeChange({
-            message: `Upload ${file.name}`,
-            changes: [{ path: `${getConfig().folder}/${file.name}`, sha: blob.sha, mode: "100644", type: "blob" }]
-          });
+          setProgress(file.name, 55, "Uploading file");
+          await putFile(`${getConfig().folder}/${file.name}`, content, `Upload ${file.name}`);
           setProgress(file.name, 100, "Uploaded");
           log(`Uploaded ${file.name} (${formatBytes(file.size)}).`);
         }
@@ -736,13 +731,12 @@
 
       try {
         setBusy(true);
-        await commitTreeChange({
-          message: `Rename ${file.name} to ${newName}`,
-          changes: [
-            { path: `${getConfig().folder}/${newName}`, sha: file.sha, mode: "100644", type: "blob" },
-            { path: file.path, sha: null, mode: "100644", type: "blob" }
-          ]
-        });
+        const nextPath = `${getConfig().folder}/${newName}`;
+        const existing = loadedFiles.find(item => item.path === nextPath);
+        if (existing && !confirm(`${newName} already exists. Replace it?`)) return;
+        const blob = await getBlob(file.sha);
+        await putFile(nextPath, blob.content.replace(/\n/g, ""), `Rename ${file.name} to ${newName}`, existing && existing.sha);
+        await removeFile(file.path, file.sha, `Remove old file ${file.name}`);
         log(`Renamed ${file.name} to ${newName}.`);
         await loadFiles();
       } catch (error) {
@@ -756,10 +750,7 @@
       if (!confirm(`Delete ${file.name} from GitHub?`)) return;
       try {
         setBusy(true);
-        await commitTreeChange({
-          message: `Delete ${file.name}`,
-          changes: [{ path: file.path, sha: null, mode: "100644", type: "blob" }]
-        });
+        await removeFile(file.path, file.sha, `Delete ${file.name}`);
         log(`Deleted ${file.name}.`);
         await loadFiles();
       } catch (error) {
@@ -769,41 +760,40 @@
       }
     }
 
-    async function createBlob(base64Content) {
+    async function putFile(path, base64Content, message, existingSha) {
       const config = getConfig();
-      return github(`/repos/${config.owner}/${config.repo}/git/blobs`, {
-        method: "POST",
-        body: JSON.stringify({ content: base64Content, encoding: "base64" })
+      const existing = existingSha || findLoadedFile(path)?.sha;
+      const body = {
+        message,
+        content: base64Content,
+        branch: config.branch
+      };
+      if (existing) body.sha = existing;
+      return github(`/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}`, {
+        method: "PUT",
+        body: JSON.stringify(body)
       });
     }
 
-    async function commitTreeChange({ message, changes }) {
+    async function removeFile(path, sha, message) {
       const config = getConfig();
-      const refPath = `/repos/${config.owner}/${config.repo}/git/ref/heads/${encodeURIComponent(config.branch)}`;
-      const ref = await github(refPath);
-      const commit = await github(`/repos/${config.owner}/${config.repo}/git/commits/${ref.object.sha}`);
-      const tree = await github(`/repos/${config.owner}/${config.repo}/git/trees`, {
-        method: "POST",
-        body: JSON.stringify({
-          base_tree: commit.tree.sha,
-          tree: changes.map(change => change.sha === null
-            ? { path: change.path, sha: null }
-            : { path: change.path, mode: change.mode, type: change.type, sha: change.sha })
-        })
-      });
-      const nextCommit = await github(`/repos/${config.owner}/${config.repo}/git/commits`, {
-        method: "POST",
+      return github(`/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}`, {
+        method: "DELETE",
         body: JSON.stringify({
           message,
-          tree: tree.sha,
-          parents: [ref.object.sha]
+          sha,
+          branch: config.branch
         })
       });
-      await github(refPath, {
-        method: "PATCH",
-        body: JSON.stringify({ sha: nextCommit.sha, force: false })
-      });
-      return nextCommit;
+    }
+
+    async function getBlob(sha) {
+      const config = getConfig();
+      return github(`/repos/${config.owner}/${config.repo}/git/blobs/${sha}`);
+    }
+
+    function findLoadedFile(path) {
+      return loadedFiles.find(file => file.path === path);
     }
 
     function renderFiles() {
@@ -826,8 +816,8 @@
           <td>${escapeHtml(file.path)}</td>
           <td>
             <div class="row-actions">
-              <button class="secondary" type="button" data-action="rename" data-sha="${file.sha}">Rename</button>
-              <button class="danger" type="button" data-action="delete" data-sha="${file.sha}">Delete</button>
+              <button class="secondary" type="button" data-action="rename" data-path="${escapeHtml(file.path)}">Rename</button>
+              <button class="danger" type="button" data-action="delete" data-path="${escapeHtml(file.path)}">Delete</button>
             </div>
           </td>
         </tr>
@@ -835,7 +825,7 @@
 
       els.fileTable.querySelectorAll("button").forEach(button => {
         button.addEventListener("click", () => {
-          const file = loadedFiles.find(item => item.sha === button.dataset.sha);
+          const file = loadedFiles.find(item => item.path === button.dataset.path);
           if (!file) return;
           if (button.dataset.action === "rename") renameFile(file);
           if (button.dataset.action === "delete") deleteFile(file);
